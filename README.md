@@ -1,4 +1,4 @@
-# Query of 16-day MODIS Aqua Data and Aggregation of Summertime NDVI
+# [Tutorial in progress] Query of 16-day MODIS Aqua Data and Aggregation of Summertime NDVI 
 Download MODIS Aqua NDVI data from NASA EarthData and aggregate to summertime average. 
 
 ## Project Overview
