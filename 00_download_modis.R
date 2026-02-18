@@ -9,10 +9,11 @@
 #
 library(terra)
 library(tidyverse)
-# remotes::install_github("rspatial/luna") #Use this line of code to install
+library(sf)
+remotes::install_github("rspatial/luna") #Use this line of code to install
 # the luna package for the first time.
 library(luna)
-library(sf)
+library(tigris)
 options(tigris_use_cache = FALSE)
 
 
@@ -20,13 +21,13 @@ options(tigris_use_cache = FALSE)
 
 # Read in username and password
 #
-user <- readLines("./user.txt")
+user <- readLines("/Users/alliej/Desktop/bu/CAFE/CAFE_MODIS/user.txt")
 # Ensure password is saved in a secure location
-pass <- readLines("./pass.txt")
+pass <- readLines("/Users/alliej/Desktop/bu/CAFE/CAFE_MODIS/pass.txt")
 
 # Set directory
 #
-datadir <- ".data/" #Fill in with your directory
+datadir <- "/Users/alliej/Documents/cafe/modis_ndvi_aggregation/example_outputs/" #Fill in with your directory
 
 
 
@@ -43,7 +44,10 @@ end <- "2020-07-31"
 # Shapefiles for USA geometries can be found at: 
 # https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
 #
-ma_county <- st_read('./tl_2020_us_county.shp') #Shapefile of all US Counties
+ma_county <- counties(year = 2020)
+st_write(ma_county, paste0(datadir, "counties.shp"))
+
+#ma_county <- st_read('./tl_2020_us_county.shp') #Shapefile of all US Counties
 ma_county_suff <- ma_county[ma_county$GEOID == "25025", ] #Suffolk County
 ma_county_suff <- vect(ma_county_suff)
 

@@ -14,7 +14,8 @@ library(sf)
 
 # Set directory
 #
-datadir <- ".data/" #Fill in with your directory
+#datadir <- ".data/" #Fill in with your directory
+datadir <- "/Users/alliej/Documents/cafe/modis_ndvi_aggregation/example_outputs/" #Fill in with your directory
 
 
 # List files (Aqua has much more data)
@@ -35,7 +36,7 @@ format(as.Date("2020-08-31"), "%j")
 
 aqua_summer_2020 <- aqua_data_files[substr(aqua_data_files, 14, 16) %in% c(153:244)]
 
-# Read in 2018 data
+# Read in data
 #
 data_summer_2020 <- rast(paste0(datadir, "Suffolk/", aqua_summer_2020))
 
