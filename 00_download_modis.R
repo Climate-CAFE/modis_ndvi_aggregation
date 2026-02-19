@@ -51,7 +51,9 @@ end <- "2020-07-31"
 ma_county <- st_read(paste0(out_dir, "input_data/", "counties.shp")) #Shapefile of all US Counties
 
 ma_county_suff <- ma_county[ma_county$GEOID == "25025", ] #Suffolk County
+#st_write(ma_county_suff, paste0(out_dir, "input_data/", "suffolk.shp"))
 ma_county_suff <- vect(ma_county_suff)
+
 
 
 # Use info to download data from NASA (Aqua)

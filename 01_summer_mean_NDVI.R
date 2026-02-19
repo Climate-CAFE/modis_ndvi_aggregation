@@ -105,21 +105,21 @@ for (i in seq_len(nsnaps)) {
   end   <- start + nlayers_per_snap - 1
   message("Processing snapshot ", i, " (layers ", start, ":", end, ")")
   
-  # subset snapshot and (optional) simplify names
+  # Subset snapshot and simplify names
   r_snap <- r[[start:end]]
   names(r_snap) <- gsub('^\"|\"$', '', names(r_snap)) # remove surrounding quotes
   
-  # find QA layer (VI Quality / pixel reliability)
+  # Find QA layer (VI Quality)
   qc_idx <- grep("VI Quality", names(r_snap), ignore.case = TRUE)
   if (length(qc_idx) < 1) stop("Quality band not found in snapshot ", i)
   qc <- r_snap[[qc_idx[1]]]
   plot(qc, main = paste0("Quality snapshot ", i))
   
-  # build quality mask (16-bit QA)
+  # Build quality mask (16-bit QA)
   quality_mask <- modis_mask(qc, 16, qa_bits)
   plot(quality_mask, main = paste0("Quality mask snapshot ", i))
   
-  # choose which bands to mask: NDVI and EVI are the first two
+  # Choose which bands to mask: NDVI and EVI are the first two
   r_to_mask <- r_snap[[1:2]]
   
   # If modis_mask returns TRUE for good pixels (keep), use directly.
@@ -130,34 +130,66 @@ for (i in seq_len(nsnaps)) {
   rmasked <- mask(r_to_mask, quality_mask)
   
   # write snapshot out as GeoTIFF (one file per snapshot)
-  out_fname <- file.path(datadir, paste0("Suffolk/", "summmer_snapshot_", i, "_masked.tif"))
+  out_fname <- file.path(datadir, paste0("Suffolk/", "summer_snapshot_", i, "_masked.tif"))
   writeRaster(rmasked, out_fname, overwrite = TRUE)
   message("Wrote: ", out_fname)
-  
-  # free memory and close file handles
-  # rm(r_snap, qc, quality_mask, r_to_mask, rmasked, r_out)
-  # gc()
+
 }
 
 
 ####################### Processing to Season ###################################
 
-data_masked <- rast(paste0(datadir, "Suffolk/", "suffolk_july_2020_masked.tif"))
+data_masked_files <- list.files(path = paste0(datadir, "Suffolk/"),
+                                pattern = "summer_snapshot*")
 
-# Add time to data
+data_masked <- rast(paste0(datadir, "Suffolk/", data_masked_files))
+
+# Now we have 6 layers: NDVI and EVI for each snapshot
+names(data_masked)
+
+# Add time to data. We need the original file names for this since they have
+# the date in them.
 #
-time(data_masked) <- as.numeric(substr(varnames(data_summer_2020), 10, 16))
+stopifnot(unique(substr(varnames(data_summer_2020), 10, 16)) != length(data_masked)/2)
 
-# Convert Julian day to Date, note subtract 1 because origin is day 1 (Jan 1)
-time(data_masked) <- as.Date(as.numeric(substr(varnames(data_summer_2020), 14, 16)) - 1, 
-                             origin = paste0(substr(varnames(data_summer_2020), 10, 13), "-01-01"))
+# Save years and Julian days as a lists of numbers
+yjjj_all <- substr(varnames(data_summer_2020), 10, 16)
+yjjj_unique <- unique(yjjj_all)
+
+years <- as.integer(substr(yjjj_unique, 1, 4))
+julians <- as.integer(substr(yjjj_unique, 5, 7))
+
+# Convert to Date: Julian day 1 => Jan 1, so subtract 1 for origin offset
+dates_unique <- mapply(function(y, j) as.Date(j - 1, origin = paste0(y, "-01-01")),
+                       years, julians, SIMPLIFY = TRUE)
+
+# Coerce to date format
+data_dates <- as.Date(rep(dates_unique, each = 2), origin = "1970-01-01")
+
+data_dates
+
+# Assign the date
+time(data_masked) <- data_dates
+
 
 # Get EVI and NDVI layers only
 #
 ndvi_summer_2020 <- subset(data_masked, names(data_masked) == 
-                             "\"250m 16 days NDVI\"")
+                             "250m 16 days NDVI")
 evi_summer_2020 <- subset(data_masked, names(data_masked) == 
-                            "\"250m 16 days EVI\"" )
+                            "250m 16 days EVI" )
+
+# Rename layer names so they are unique
+#
+current_names_ndvi <- gsub('^\"|\"$', '', names(ndvi_summer_2020))
+new_names <- paste0(current_names_ndvi, "_", format(unique(data_dates), "%Y%m%d"))
+names(ndvi_summer_2020) <- new_names
+names(ndvi_summer_2020)
+
+current_names_evi <- gsub('^\"|\"$', '', names(evi_summer_2020))
+new_names <- paste0(current_names_evi, "_", format(unique(data_dates), "%Y%m%d"))
+names(evi_summer_2020) <- new_names
+names(evi_summer_2020)
 
 
 # Bring in data for Suffolk County in Massachusetts again.
@@ -167,8 +199,10 @@ evi_summer_2020 <- subset(data_masked, names(data_masked) ==
 # Shapefiles for USA geometries can be found at: 
 # https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
 #
-ma_county <- st_read('./tl_2020_us_county.shp') #Shapefile of all US Counties
-ma_county_suff <- ma_county[ma_county$GEOID == "25025", ] #Suffolk County
+#ma_county <- st_read('./tl_2020_us_county.shp') #Shapefile of all US Counties
+#ma_county_suff <- ma_county[ma_county$GEOID == "25025", ] #Suffolk County
+
+ma_county_suff <- st_read(paste0(out_dir, "input_data/", "suffolk.shp")) 
 ma_county_suff <- vect(ma_county_suff)
 
 
@@ -177,7 +211,7 @@ ma_county_suff <- vect(ma_county_suff)
 ma_county_suff_proj <- project(ma_county_suff, crs(data_masked[[1]]))
 ext(ma_county_suff_proj)
 
-# Crop NDVI to suffolk county
+# Crop NDVI and EVI to Suffolk County
 #
 suff_ndvi_summer_2020 <- crop(ndvi_summer_2020, ext(ma_county_suff_proj))
 suff_evi_summer_2020 <- crop(evi_summer_2020, ext(ma_county_suff_proj))
@@ -190,8 +224,11 @@ plot(suff_ndvi_summer_2020[[1]])
 
 # Calculate mean for summertime
 #
-suff_ndvi_avgsummer_20 <- app(suff_ndvi_summer_2020, mean)
-suff_evi_avgsummer_20 <- app(suff_evi_summer_2020, mean)
+suff_ndvi_avgsummer_20 <- app(suff_ndvi_summer_2020, mean, na.rm = TRUE)
+suff_evi_avgsummer_20 <- app(suff_evi_summer_2020, mean, na.rm = TRUE)
+
+plot(suff_ndvi_avgsummer_20)
+plot(suff_evi_avgsummer_20)
 
 
 writeRaster(suff_ndvi_avgsummer_20, paste0(datadir, "Suffolk/summer_mean/", "suffolk_2020_mean_ndvi.tif"), 
