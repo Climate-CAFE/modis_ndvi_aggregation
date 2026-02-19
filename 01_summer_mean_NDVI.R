@@ -15,7 +15,7 @@ library(sf)
 # Set directory
 #
 #datadir <- ".data/" #Fill in with your directory
-datadir <- "/Users/alliej/Documents/cafe/modis_ndvi_aggregation/example_outputs/" #Fill in with your directory
+datadir <- "/Users/alliej/Documents/cafe/modis_ndvi_data/" #Fill in with your directory
 
 
 # List files (Aqua has much more data)
@@ -52,18 +52,24 @@ names(data_summer_2020) # 3*12 layers = 36
 
 ########################### Quality control ###################################
 
-
 r <- data_summer_2020
 
-#https://www.ctahr.hawaii.edu/grem/mod13ug/sect0005.html 
-#https://lpdaac.usgs.gov/documents/621/MOD13_User_Guide_V61.pdf
-#page 18 for the description of QA data set
+# Explore the different layers in the raster (also done above). 
+# We can see that layers 1 and 2 are the NDVI and EVI values, and 
+# layer 3 contains the vegetation index "quality" layer.
+names(r)
 
-from <- c(1,9,11,12,16)
-to   <- c(2,9,11,14,16)
-reject <- c("01,10,11", "1", "1", "000,011,100,101,110,111", "1")
-qa_bits <- cbind(from, to, reject)
-qa_bits
+# For each tile (16-day snapshot), we need to mask areas that do not have
+# sufficient pixel quality. For this step, we will break up our raster layers by
+# time point and then mask the NDVI and EVI layers using the VI quality layer. 
+
+nlayers_per_snap <- 12
+nsnaps <- length(names(r)) / nlayers_per_snap
+if (nsnaps != floor(nsnaps)) stop("Unexpected number of layers / snapshot size")
+
+# The links below have more information about the different layers. 
+# The VI quality layer has a binary value with several binary bits - each bit
+# represents a different quality metric. 
 
 # Bits 1-2: Overall quality. Keep 00 (good) and maybe 01 (check other QA)
 # Bits 3-6 (usefulness): Has scale of quality.
@@ -77,32 +83,62 @@ qa_bits
 # Bit 15: possible snow/ice (hopefully not relevant for summer)
 # Bit 16: possible shadow
 
-# Explore the different layers in the raster (also done above). 
-# We can see that layers 1 and 2 are the NDVI and EVI values, and 
-# layer 3 contains the vegetation index "quality" layer.
-names(r)
-
-qc <- r[[3]] #Band 3 has the VI Quality layer
-plot(qc, main = "Quality")
+#https://www.ctahr.hawaii.edu/grem/mod13ug/sect0005.html 
+#https://lpdaac.usgs.gov/documents/621/MOD13_User_Guide_V61.pdf
+# Page 18 has the description of QA data set.
 
 
-# This MODIS mask function in the luna package can create a "mask" for each 
-# layer based on our selection of bad quality pixels. It takes the number of 
-# bits as an input so we should use the VI Quality layer. 
-# The other arguments are a raster and a 3-column matrix. 
-# The first two columns represent the start and end of a range of bits, and the
-# third column contains the value(s) that should be rejected.
-quality_mask <- modis_mask(qc, 16, qa_bits)
-plot(quality_mask, main = "Quality mask")
+# What we will do is make a matrix of certain bit ranges and values for those
+# ranges that we want to mask out. Then we can use the modis_mask function 
+# which takes the VI quality layer and this matrix as an input to mask the 
+# NDVI and EVI layers. 
 
-rmask <- mask(r, quality_mask)
-
-#### add a legend to mine ####
-plotRGB(rmask, r = 2, g = 1, b = 4, main='False color composite', stretch="lin")
+from <- c(1,9,11,12,16)
+to   <- c(2,9,11,14,16)
+reject <- c("01,10,11", "1", "1", "000,011,100,101,110,111", "1")
+qa_bits <- cbind(from, to, reject)
+qa_bits
 
 
-writeRaster(rmask, paste0(datadir, "Suffolk/", "suffolk_july_2020_masked.tif"), 
-            overwrite = T)
+for (i in seq_len(nsnaps)) {
+  start <- (i-1)*nlayers_per_snap + 1
+  end   <- start + nlayers_per_snap - 1
+  message("Processing snapshot ", i, " (layers ", start, ":", end, ")")
+  
+  # subset snapshot and (optional) simplify names
+  r_snap <- r[[start:end]]
+  names(r_snap) <- gsub('^\"|\"$', '', names(r_snap)) # remove surrounding quotes
+  
+  # find QA layer (VI Quality / pixel reliability)
+  qc_idx <- grep("VI Quality", names(r_snap), ignore.case = TRUE)
+  if (length(qc_idx) < 1) stop("Quality band not found in snapshot ", i)
+  qc <- r_snap[[qc_idx[1]]]
+  plot(qc, main = paste0("Quality snapshot ", i))
+  
+  # build quality mask (16-bit QA)
+  quality_mask <- modis_mask(qc, 16, qa_bits)
+  plot(quality_mask, main = paste0("Quality mask snapshot ", i))
+  
+  # choose which bands to mask: NDVI and EVI are the first two
+  r_to_mask <- r_snap[[1:2]]
+  
+  # If modis_mask returns TRUE for good pixels (keep), use directly.
+  # If it marks bad pixels as TRUE, uncomment the invert line below:
+  # quality_mask <- !quality_mask
+  
+  # apply mask (mask() will set values to NA where quality_mask is NA/0)
+  rmasked <- mask(r_to_mask, quality_mask)
+  
+  # write snapshot out as GeoTIFF (one file per snapshot)
+  out_fname <- file.path(datadir, paste0("Suffolk/", "summmer_snapshot_", i, "_masked.tif"))
+  writeRaster(rmasked, out_fname, overwrite = TRUE)
+  message("Wrote: ", out_fname)
+  
+  # free memory and close file handles
+  # rm(r_snap, qc, quality_mask, r_to_mask, rmasked, r_out)
+  # gc()
+}
+
 
 ####################### Processing to Season ###################################
 
