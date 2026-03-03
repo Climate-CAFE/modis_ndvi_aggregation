@@ -1,23 +1,24 @@
 # Created by: Zach Popp
-# Date Created: 05/15/2025
+# Adapted by: Allison James
+# Date Created: 02/19/2026
 # Version Number: v1
 # Date Modified: 
 # Modifications:
-#   Code modified from: https://github.com/Climate-CAFE/era5-daily-heat-aggregation
+#   Code modified from: https://github.com/Climate-CAFE/ERA5-daily-heat-aggregation
 #
 # *************************************************************** #
-# ~~~~~~~  ERA5 Re-Analysis Raster Aggregation Point      ~~~~~~~ #
+# ~~~~~~~  MODIS Re-Analysis Raster Aggregation Point      ~~~~~~~ #
 # *************************************************************** #
 #   Adapted from scripts developed by Keith Spangler, Muskaan Khemani for 
 #       processing raster data onto polygon boundaries:
 #       https://github.com/Climate-CAFE/population_weighting_raster_data/blob/main/Population_Weighting_Raster_to_Census_Units.R
 #
 # Overview:
-#     Process ERA5 rasters to administrative boundaries. This script is the 
+#     Process MODIS rasters to administrative boundaries. This script is the 
 #     first in a two-step raster processing process (following the steps to 
 #     create hourly WBGT and UTCI in scripts 1-4). In this script we build
 #     a polygon grid that intersects our polygons of interest against the grid
-#     of ERA5 WBGT and UTCI inputs. This will be used to calculate area-weighted
+#     of MODIS WBGT and UTCI inputs. This will be used to calculate area-weighted
 #     estimates of heat metrics at the polygon level
 
 # Load required packages
@@ -35,7 +36,7 @@ sf_use_s2(FALSE)
 # S2 is for computing distances, areas, etc. on a SPHERE (using
 # geographic coordinates, i.e., lat/lon in decimal-degrees); no need for this
 # extra computational processing time if using PROJECTED coordinates,
-# since these are already mapped to a flat surface. Here, ERA5 data
+# since these are already mapped to a flat surface. Here, MODIS data
 # is indeed in geographic coordinates, but the scale of areas we are 
 # interested in is very small, and hence the error introduced by 
 # ignoring the Earth's curvature over these tiny areas is negligible and
@@ -52,82 +53,92 @@ if (packageVersion("terra") < "1.5.34"   | packageVersion("sf") < "1.0.7" |
 
 ########################## User-Defined Parameters #############################
 
-# Set region input
-#
-region_in <- 2
 
 # Set up directories to read in and output data
 # 
-era_dir <- paste0("/projectnb/gislane/Zach/CAFE_ERA5_WBGT/RawData/ERA5_Hourly/region", region_in)
-points_dir <- "/projectnb/gislane/Zach/CAFE_ERA5_WBGT/RawData/ERA5_Fishnet/"
 
-# LOAD Shapefile. This approach involves a US application for the Northeast US,
-# downloaded using TIGRIS. If you are conducting a global analysis or have 
+dir <- "/Users/alliej/Documents/cafe/modis_ndvi_data/"
+modis_dir <- paste0(dir, "Suffolk/summer_mean/")
+points_dir <- paste0(dir, "MODIS_Fishnet/")
+  
+  
+# LOAD Shapefile. This approach involves a US application for Suffolk County, 
+# Massachusetts downloaded using TIGRIS. If you are conducting a global analysis or have 
 # an existing shapefile, the below can be replaced to just set the input_shape
 # input (this script does not use the shapefile as before, it just uses US 
 # state names from that shapefle to download US counties)
 #     input_shape <- st_read("shapefile_path")
 #
-shapefile <- tigris::states(year = 2020)
+#shapefile <- tigris::counties(year = 2020)
 
 # Subset to the actual region of interest
 #
-shapefile <- shapefile[shapefile$REGION == region_in, ]
+region_in <- "25025"
+#shapefile <- shapefile[shapefile$GEOID == region_in, ]
 
-# Query counties in region - we first use the above to set the states we need,
-# then download the actual shape here
+# Query tracts in region - we first use the above to set the counties we need,
+# then download the actual shape here. This approach could be easily modified
+# to query counties in a state, for example.
 #
-input_shape <- tigris::counties(shapefile$STATEFP, year = 2020)
+state <- "MA" #Feel free to delete or change
+county_name <- "Suffolk" #Feel free to delete or change
+input_shape <- tigris::tracts(state = state, county = county_name, year = 2020)
+
+# Remove water - since we have masked out water in the MODIS data already,
+# we don't want water to be included in NDVI aggregations later. For TIGER/Line
+# shapefiles, we can just remove polygons that have a land area of 0.
+#
+input_shape <- input_shape %>% filter(ALAND != 0)
 
 ####################### Develop Grid ###########################################
 
-# Read in ERA5 raster data
+# Read in MODIS raster data
 #
-era_files <- list.files(era_dir, pattern=paste0('.*.nc'), full.names = F)
+modis_files <- list.files(modis_dir, pattern=paste0('mean.*.tif'), full.names = F)
 
-# Stack all of the hourly files by year
+# Stack all of the files
 #
-era_files <- paste0(era_dir, "/", era_files)
+modis_files <- paste0(modis_dir, "/", modis_files)
 
-# We just need one variable, as the grid is the same across the board
+# We just need one layer, as the grid is the same across the board
 #
-era_stack <- rast(era_files[grepl("2m_temperature2000_01", era_files)])
+modis_stack <- rast(modis_files[1])
 
 # %%%%%%%%%%%%%%%%%%%% CREATE A FISHNET GRID OF THE RASTER EXTENT %%%%%%%%%%%% #
 #
 # Here, we are making a shapefile that is a fishnet grid of the raster extent.
-# It will essentially be a polygon of lines surrounding each ERA5 cell.
+# It will essentially be a polygon of lines surrounding each MODIS cell.
 #
 # Reference/credit: https://gis.stackexchange.com/a/243585
 #
-era_raster <- era_stack[[1]]
-era_extent <- ext(era_raster)
-xmin <- era_extent[1]
-xmax <- era_extent[2]
-ymin <- era_extent[3]
-ymax <- era_extent[4]
+modis_raster <- modis_stack[[1]]
+modis_extent <- ext(modis_raster)
+xmin <- modis_extent[1]
+xmax <- modis_extent[2]
+ymin <- modis_extent[3]
+ymax <- modis_extent[4]
 
-era_matrix <- matrix(c(xmin, ymax,
+modis_matrix <- matrix(c(xmin, ymax,
                         xmax, ymax,
                         xmax, ymin,
                         xmin, ymin,
                         xmin, ymax), byrow = TRUE, ncol = 2) %>%
   list() %>% 
   st_polygon() %>% 
-  st_sfc(., crs = st_crs(era_raster))
+  st_sfc(., crs = st_crs(modis_raster))
 
-# Create fishnet of the ERA5 matrix. This takes some time.
+# Create fishnet of the MODIS matrix. This takes some time.
 #
-era_rows <- dim(era_raster)[1]
-era_cols <- dim(era_raster)[2]
-era_fishnet <- st_make_grid(era_matrix, n = c(era_cols, era_rows), 
-                             crs = st_crs(era_raster), what = 'polygons') %>%
+modis_rows <- dim(modis_raster)[1]
+modis_cols <- dim(modis_raster)[2]
+modis_fishnet <- st_make_grid(modis_matrix, n = c(modis_cols, modis_rows), 
+                             crs = st_crs(modis_raster), what = 'polygons') %>%
   st_sf('geometry' = ., data.frame('ID' = 1:length(.)))
 
 
 # Automated QC check -- confirm same coordinate reference system (CRS) between
-#                       the fishnet and ERA5 raster
-if ( !(all.equal(st_crs(era_raster), st_crs(era_fishnet))) ) {
+#                       the fishnet and MODIS raster
+if ( !(all.equal(st_crs(modis_raster), st_crs(modis_fishnet))) ) {
   cat("ERROR: CRS's do not match \n") } else { cat(":) CRS's match \n") }
 
 ############# Form Fishnet - Shape Union #######################################
@@ -140,11 +151,11 @@ if (!("geometry" %in% names(input_shape))) {
 
 # Match the CRS of the wards shapefile to the fishnet and era data and confirm match
 #
-input_shape <- st_transform(input_shape, crs = st_crs(era_fishnet))
+input_shape <- st_transform(input_shape, crs = st_crs(modis_fishnet))
 
 # Run check to ensure CRS are equal
 #
-if (!isTRUE(all.equal(st_crs(input_shape), st_crs(era_fishnet)))) {
+if (!isTRUE(all.equal(st_crs(input_shape), st_crs(modis_fishnet)))) {
   cat("ERROR: CRS's don't match \n")  } else { cat(":) CRS's match \n") }
 
 # %%%%%%%%%%%%%%%%%% CREATE UNION BETWEEN FISHNET AND WARDS %%%%%%%%% #
@@ -163,11 +174,11 @@ my_union <- function(a,b) {
 # Ensure geometries are valid
 #
 input_shape <- st_make_valid(input_shape) 
-era_fishnet <- st_make_valid(era_fishnet)
+modis_fishnet <- st_make_valid(modis_fishnet)
 
 # Create the union between the fishnet and blocks layers
 #
-fishnetward <- my_union(era_fishnet, input_shape)
+fishnetward <- my_union(modis_fishnet, input_shape)
 fishnetward$UniqueID <- 1:dim(fishnetward)[1]
 
 # Automated QC -- Check to see if the union has introduced any geometry errors
@@ -207,7 +218,7 @@ if (class(check)[1] == "try-error") {
 }
 
 # Automated QC check -- ensure that there is a variable identifying the geographies
-#                       that will be used for aggregation (here Kenya wards). 
+#                       that will be used for aggregation (here tracts). 
 #                       Note that these variable names may change
 #                       depending on the version and country used. 
 # Specify name of the geographic identifier in your administrative boundary data
@@ -241,12 +252,12 @@ fishnetward <- fishnetward[which(fishnetward$Area_m2 > 10),]
 # %%%%%%%%%%%%%%%%%%%%%%%%%%%% CONVERT POLYGON TO POINTS %%%%%%%%%%%%%%%%%%%%% #
 #
 # The final step is to create the extraction points. This is a point shapefile
-# that will enable us to extract ERA5 data from an entire stack of rasters rather
+# that will enable us to extract MODIS data from an entire stack of rasters rather
 # than individually processing zonal statistics on each raster layer. 
 #
 # NOTE: This step throws a warning message related to using geographic coordinates 
 #       rather than a projected CRS. This step is only placing a point inside the 
-#       polygon to identify which ERA5 grid cell we need to extract from; as all
+#       polygon to identify which MODIS grid cell we need to extract from; as all
 #       of the input data are on the same CRS and the spatial scale of the polygons
 #       is extremely small, this does not introduce substantive error.
 #
@@ -272,5 +283,5 @@ extraction_pts$SpatWt <- extraction_pts$Area_m2 / extraction_pts$Area_m2.sumfun
 
 # Save extraction points
 #
-st_write(extraction_pts, paste0(points_dir, "era5_county_usreg", region_in, "_extraction_pts.gpkg"),
+st_write(extraction_pts, paste0(points_dir, "MODIS_county_usreg", region_in, "_extraction_pts.gpkg"),
          append = FALSE)
