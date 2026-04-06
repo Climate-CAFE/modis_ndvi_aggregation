@@ -1,9 +1,7 @@
 #### CAFE Tutorial: Download and process NDVI
-# Step 2: Calculate summer average and aggregate
+# Step 2: Calculate summer average
 
 #Author: Allison James, Zach Popp
-#Date: 2/4/2026
-
 
 # Load packages
 #
@@ -14,45 +12,30 @@ library(sf)
 
 # Set directory
 #
-#datadir <- ".data/" #Fill in with your directory
-datadir <- "/Users/alliej/Documents/cafe/modis_ndvi_data/" #Fill in with your directory
-
+datadir <- ".data/" #Fill in with your directory
+interdir <- paste0(datadir, "masked/")
+outdir <- paste0(datadir, "summer_mean/")
 
 # List files (Aqua has much more data)
 #
-aqua_data_files <- list.files(path = paste0(datadir, "Suffolk/"),
-                              pattern = "MYD13.*.hdf$")
+aqua_data_files <- list.files(path = datadir, pattern = "MYD13.*.hdf$")
 
-
-
-# Data are available in 16 day increments. Summer is most of interest. 
-# Adjust dates for your time period. 
-# If you are working with a period of multiple years, that includes a leap year,
-# you may need to repeat this process for that year specifically, as summer
-# will be a different date range.
-#
-format(as.Date("2020-06-01"), "%j")
-format(as.Date("2020-08-31"), "%j")
-
-aqua_summer_2020 <- aqua_data_files[substr(aqua_data_files, 14, 16) %in% c(153:244)]
 
 # Read in data
 #
-data_summer_2020 <- rast(paste0(datadir, "Suffolk/", aqua_summer_2020))
+data_summer <- rast(paste0(datadir, aqua_data_files))
 
 # Assess characteristics
 #
-dim(data_summer_2020)
-res(data_summer_2020) #231.6564 231.6564 about 250m
-nlyr(data_summer_2020)
-names(data_summer_2020) # 3*12 layers = 36
-# 16 days: ndvi, evi, vi quality, red reflectance, nir reflec, blue reflec, 
-# mir reflec, view zenith, sun zenity, relative azimuth, composite day, pixel reliablity
+dim(data_summer)
+res(data_summer) #231.6564 231.6564 about 250m
+nlyr(data_summer)
+names(data_summer)
 
 
 ########################### Quality control ###################################
 
-r <- data_summer_2020
+r <- data_summer
 
 # Explore the different layers in the raster (also done above). 
 # We can see that layers 1 and 2 are the NDVI and EVI values, and 
@@ -83,8 +66,9 @@ if (nsnaps != floor(nsnaps)) stop("Unexpected number of layers / snapshot size")
 # Bit 15: possible snow/ice (hopefully not relevant for summer)
 # Bit 16: possible shadow
 
-#https://www.ctahr.hawaii.edu/grem/mod13ug/sect0005.html 
-#https://lpdaac.usgs.gov/documents/621/MOD13_User_Guide_V61.pdf
+# For more information, you can read:
+# https://www.ctahr.hawaii.edu/grem/mod13ug/sect0005.html 
+# https://lpdaac.usgs.gov/documents/621/MOD13_User_Guide_V61.pdf
 # Page 18 has the description of QA data set.
 
 
@@ -130,7 +114,7 @@ for (i in seq_len(nsnaps)) {
   rmasked <- mask(r_to_mask, quality_mask)
   
   # write snapshot out as GeoTIFF (one file per snapshot)
-  out_fname <- file.path(datadir, paste0("Suffolk/", "summer_snapshot_", i, "_masked.tif"))
+  out_fname <- file.path(paste0(interdir, "summer_snapshot_", i, "_masked.tif"))
   writeRaster(rmasked, out_fname, overwrite = TRUE)
   message("Wrote: ", out_fname)
 
@@ -139,10 +123,10 @@ for (i in seq_len(nsnaps)) {
 
 ####################### Processing to Season ###################################
 
-data_masked_files <- list.files(path = paste0(datadir, "Suffolk/"),
+data_masked_files <- list.files(path = interdir,
                                 pattern = "summer_snapshot*")
 
-data_masked <- rast(paste0(datadir, "Suffolk/", data_masked_files))
+data_masked <- rast(paste0(interdir, data_masked_files))
 
 # Now we have 6 layers: NDVI and EVI for each snapshot
 names(data_masked)
@@ -150,10 +134,10 @@ names(data_masked)
 # Add time to data. We need the original file names for this since they have
 # the date in them.
 #
-stopifnot(unique(substr(varnames(data_summer_2020), 10, 16)) != length(data_masked)/2)
+stopifnot(unique(substr(varnames(data_summer), 10, 16)) != length(data_masked)/2)
 
 # Save years and Julian days as a lists of numbers
-yjjj_all <- substr(varnames(data_summer_2020), 10, 16)
+yjjj_all <- substr(varnames(data_summer), 10, 16)
 yjjj_unique <- unique(yjjj_all)
 
 years <- as.integer(substr(yjjj_unique, 1, 4))
@@ -174,66 +158,97 @@ time(data_masked) <- data_dates
 
 # Get EVI and NDVI layers only
 #
-ndvi_summer_2020 <- subset(data_masked, names(data_masked) == 
+ndvi_summer <- subset(data_masked, names(data_masked) == 
                              "250m 16 days NDVI")
-evi_summer_2020 <- subset(data_masked, names(data_masked) == 
+evi_summer <- subset(data_masked, names(data_masked) == 
                             "250m 16 days EVI" )
 
-# Rename layer names so they are unique
+# Add date to layer names so they are unique
 #
-current_names_ndvi <- gsub('^\"|\"$', '', names(ndvi_summer_2020))
+current_names_ndvi <- gsub('^\"|\"$', '', names(ndvi_summer))
 new_names <- paste0(current_names_ndvi, "_", format(unique(data_dates), "%Y%m%d"))
-names(ndvi_summer_2020) <- new_names
-names(ndvi_summer_2020)
+names(ndvi_summer) <- new_names
+names(ndvi_summer)
 
-current_names_evi <- gsub('^\"|\"$', '', names(evi_summer_2020))
+current_names_evi <- gsub('^\"|\"$', '', names(evi_summer))
 new_names <- paste0(current_names_evi, "_", format(unique(data_dates), "%Y%m%d"))
-names(evi_summer_2020) <- new_names
-names(evi_summer_2020)
+names(evi_summer) <- new_names
+names(evi_summer)
 
 
-# Bring in data for Suffolk County in Massachusetts again.
-# This time we will use it to crop our data down to Suffolk County. Right now we 
-# have data for the tile(s) that intersect with our area of interest, so we can use
-# the outline of the county to remove the excess pixels in the raster layers.
+# Bring in your administrative boundaries again.
+# Example: Suffolk County in Massachusetts.
+# This time we will use it to crop our data down to the boundaries. Right now we 
+# have data for the full tile(s) that intersect with our area of interest, so we can use
+# the admin boundaries to remove the excess pixels in the raster layers.
 # Shapefiles for USA geometries can be found at: 
 # https://www.census.gov/geographies/mapping-files/time-series/geo/tiger-line-file.html
 #
-#ma_county <- st_read('./tl_2020_us_county.shp') #Shapefile of all US Counties
+
+#ma_county <- st_read('./tl_us_county.shp') #Shapefile of all US Counties
 #ma_county_suff <- ma_county[ma_county$GEOID == "25025", ] #Suffolk County
+# ma_county_suff <- st_read(paste0(out_dir, "input_data/", "suffolk.shp")) 
+# ma_county_suff <- vect(ma_county_suff)
 
-ma_county_suff <- st_read(paste0(out_dir, "input_data/", "suffolk.shp")) 
-ma_county_suff <- vect(ma_county_suff)
+
+# Change for your file
+admin_boundaries <- st_read(paste0(in_dir, "name_of_your_shapefile.shp")) 
+
+admin_boundaries <- vect(admin_boundaries)
 
 
-# Try to project MA counties to crs of data
+# Project boundaries to crs of NDVI data
 #
-ma_county_suff_proj <- project(ma_county_suff, crs(data_masked[[1]]))
-ext(ma_county_suff_proj)
+admin_boundaries_proj <- project(admin_boundaries, crs(data_masked[[1]]))
 
-# Crop NDVI and EVI to Suffolk County
+
+# Crop NDVI and EVI to administrative boundaries
 #
-suff_ndvi_summer_2020 <- crop(ndvi_summer_2020, ext(ma_county_suff_proj))
-suff_evi_summer_2020 <- crop(evi_summer_2020, ext(ma_county_suff_proj))
+crop_ndvi_summer <- crop(ndvi_summer, ext(admin_boundaries_proj))
+crop_evi_summer <- crop(evi_summer, ext(admin_boundaries_proj))
 
 
-# Plot this new Suffolk county only layer.
-# We should now see that we no longer see the entire tile, just Suffolk County.
-plot(suff_ndvi_summer_2020[[1]])
+# Plot this new cropped layer.
+# We should now see that we no longer see the entire tile.
+plot(crop_ndvi_summer[[1]])
 
 
-# Calculate mean for summertime
+# Calculate the annual summertime mean
 #
-suff_ndvi_avgsummer_20 <- app(suff_ndvi_summer_2020, mean, na.rm = TRUE)
-suff_evi_avgsummer_20 <- app(suff_evi_summer_2020, mean, na.rm = TRUE)
 
-plot(suff_ndvi_avgsummer_20)
-plot(suff_evi_avgsummer_20)
+annual_mean_by_year <- function(rast, years){
+  
+  nm <- names(rast)
+  date_strs <- sub(".*(\d{8})$", "\1", nm)
+  dates <- as.Date(date_strs, "%Y%m%d")
+  out_list <- list()
+  
+  for (yr in years) {
+    sel <- which(format(dates, "%Y") == as.character(yr))
+    if (length(sel) == 0) {
+      warning("No layers found for year ", yr)
+      next
+    }
+    
+    # subset and compute mean
+    subr <- rast[[sel]]
+    yr_mean <- app(subr, mean, na.rm = TRUE)
+    names(yr_mean) <- paste0(names(rast)[1] %>% sub("\d{8}$", "", .), "_", yr) # base name + year
+    out_list[[as.character(yr)]] <- yr_mean
+  }
+}
+
+years <- 2020:2022  #Change for your years of interest
+crop_ndvi_avgsummer_byyear <- annual_mean_by_year(crop_ndvi_summer, years)
+crop_evi_avgsummer_byyear  <- annual_mean_by_year(crop_evi_summer, years)
+
+plot(crop_ndvi_avgsummer_byyear)
+plot(crop_evi_avgsummer_byyear)
 
 
-writeRaster(suff_ndvi_avgsummer_20, paste0(datadir, "Suffolk/summer_mean/", "suffolk_2020_mean_ndvi.tif"), 
+writeRaster(crop_ndvi_avgsummer_byyear, paste0(outdir, "suffolk_mean_ndvi.tif"), 
             overwrite = T)
-writeRaster(suff_evi_avgsummer_20, paste0(datadir, "Suffolk/summer_mean/", "suffolk_2020_mean_evi.tif"), 
+writeRaster(crop_evi_avgsummer_byyear, paste0(outdir, "suffolk_mean_evi.tif"), 
             overwrite = T)
 
 
